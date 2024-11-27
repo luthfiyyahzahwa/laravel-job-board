@@ -69,15 +69,14 @@ class ListingController extends Controller
 
     public function store(Request $request)
     {
-        // process the listing creation form
+        // Validasi input tanpa payment_method_id
         $validationArray = [
             'title' => 'required',
             'company' => 'required',
             'logo' => 'file|max:2048',
             'location' => 'required',
             'apply_link' => 'required|url',
-            'content' => 'required',
-            'payment_method_id' => 'required'
+            'content' => 'required'
         ];
 
         if (!Auth::check()) {
@@ -90,9 +89,8 @@ class ListingController extends Controller
 
         $request->validate($validationArray);
 
-        // is a user signed in? if not, create one and authenticate
+        // Cek apakah ada user yang login, jika tidak buat user baru
         $user = Auth::user();
-
         if (!$user) {
             $user = User::create([
                 'name' => $request->name,
@@ -100,47 +98,35 @@ class ListingController extends Controller
                 'password' => Hash::make($request->password)
             ]);
 
-            $user->createAsStripeCustomer();
-
-            Auth::login($user);
+            Auth::login($user); // Login user baru
         }
 
-        // process the payment and create the listing
+        // Proses pembuatan listing tanpa pembayaran
         try {
-            $amount = 9900; // $99.00 USD in cents
-            if ($request->filled('is_highlighted')) {
-                $amount += 1900;
-            }
-
-            $user->charge($amount, $request->payment_method_id);
-
             $md = new \ParsedownExtra();
 
-            $listing = $user->listings()
-                ->create([
-                    'title' => $request->title,
-                    'slug' => Str::slug($request->title) . '-' . rand(1111, 9999),
-                    'company' => $request->company,
-                    'logo' => basename($request->file('logo')->store('public')),
-                    'location' => $request->location,
-                    'apply_link' => $request->apply_link,
-                    'content' => $md->text($request->input('content')),
-                    'is_highlighted' => $request->filled('is_highlighted'),
-                    'is_active' => true
-                ]);
+            $listing = $user->listings()->create([
+                'title' => $request->title,
+                'slug' => Str::slug($request->title) . '-' . rand(1111, 9999),
+                'company' => $request->company,
+                'logo' => $request->hasFile('logo') ? basename($request->file('logo')->store('public')) : null,
+                'location' => $request->location,
+                'apply_link' => $request->apply_link,
+                'content' => $md->text($request->input('content')),
+                'is_highlighted' => $request->filled('is_highlighted'),
+                'is_active' => true
+            ]);
 
-            foreach(explode(',', $request->tags) as $requestTag) {
-                $tag = Tag::firstOrCreate([
-                    'slug' => Str::slug(trim($requestTag))
-                ], [
-                    'name' => ucwords(trim($requestTag))
-                ]);
-
+            foreach (explode(',', $request->tags) as $requestTag) {
+                $tag = Tag::firstOrCreate(
+                    ['slug' => Str::slug(trim($requestTag))],
+                    ['name' => ucwords(trim($requestTag))]
+                );
                 $tag->listings()->attach($listing->id);
             }
 
             return redirect()->route('dashboard');
-        } catch(\Exception $e) {
+        } catch (\Exception $e) {
             return redirect()->back()
                 ->withErrors(['error' => $e->getMessage()]);
         }
